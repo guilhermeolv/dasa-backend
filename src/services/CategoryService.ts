@@ -65,8 +65,8 @@ export class CategoryService {
             category.owner = user;
         }
 
-        Object.assign(category, data);
-        return await this.categoryRepository.save(category);
+        const updatedCategory = Object.assign({}, category, data);
+        return await this.categoryRepository.save(updatedCategory);
     }
 
     async remove(id: number): Promise<{ message: string }> {

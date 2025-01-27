@@ -91,8 +91,8 @@ export class ProductService {
             product.category = category;
         }
 
-        Object.assign(product, data);
-        return await this.productRepository.save(product);
+        const updatedProduct = Object.assign({}, product, data);
+        return await this.productRepository.save(updatedProduct);
     }
 
     async remove(id: number): Promise<void> {
@@ -108,7 +108,7 @@ export class ProductService {
     async findByOwner(ownerId: number): Promise<Product[]> {
         return await this.productRepository.find({
             where: { owner: { id: ownerId } },
-            relations: ["owner"]
+            relations: ["owner", "category"]
         });
     }
 
