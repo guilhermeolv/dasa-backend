@@ -18,6 +18,10 @@ export class CategoryService {
         @Inject(CACHE_MANAGER) private cacheManager: Cache
     ) {}
 
+    private logCacheOperation(operation: string, key: string) {
+        console.log(`🔄 Redis Operation: ${operation} - Key: ${key}`);
+    }
+
     async create(data: CreateCategoryDto): Promise<Category> {
         const user = await this.userRepository.findOne({
             where: { id: data.ownerId }
@@ -33,32 +37,41 @@ export class CategoryService {
         });
         
         const savedCategory = await this.categoryRepository.save(category);
-        await this.cacheManager.del('all_categories');
+        await this.invalidateCategoryCaches();
+        await this.invalidateOwnerCache(savedCategory.owner.id);
         return savedCategory;
     }
 
     async findAll(): Promise<Category[]> {
+        this.logCacheOperation('GET', 'all_categories');
         const cachedCategories = await this.cacheManager.get<Category[]>('all_categories');
+        
         if (cachedCategories) {
+            console.log('✅ Cache HIT: Dados recuperados do Redis - Key: all_categories');
             return cachedCategories;
         }
 
+        console.log('❌ Cache MISS: Buscando dados do banco - Key: all_categories');
         const categories = await this.categoryRepository.find({
             relations: ["products", "owner"]
         });
 
+        this.logCacheOperation('SET', 'all_categories');
         await this.cacheManager.set('all_categories', categories);
         return categories;
     }
 
     async findOne(id: number): Promise<Category> {
         const cacheKey = `category_${id}`;
+        this.logCacheOperation('GET', cacheKey);
         const cachedCategory = await this.cacheManager.get<Category>(cacheKey);
         
         if (cachedCategory) {
+            console.log(`✅ Cache HIT: Categoria encontrada no Redis - Key: ${cacheKey}`);
             return cachedCategory;
         }
 
+        console.log(`❌ Cache MISS: Buscando categoria no banco - Key: ${cacheKey}`);
         const category = await this.categoryRepository.findOne({
             where: { id },
             relations: ["products", "owner"]
@@ -68,12 +81,14 @@ export class CategoryService {
             throw new NotFoundException('Categoria não encontrada');
         }
 
+        this.logCacheOperation('SET', cacheKey);
         await this.cacheManager.set(cacheKey, category);
         return category;
     }
 
     async update(id: number, data: Partial<CreateCategoryDto>): Promise<Category> {
         const category = await this.findOne(id);
+        const oldOwnerId = category.owner?.id;
 
         if (data.ownerId) {
             const user = await this.userRepository.findOne({
@@ -89,8 +104,13 @@ export class CategoryService {
         const updatedCategory = Object.assign({}, category, data);
         const savedCategory = await this.categoryRepository.save(updatedCategory);
         
-        await this.cacheManager.del('all_categories');
-        await this.cacheManager.del(`category_${id}`);
+        await this.invalidateCategoryCaches();
+        if (oldOwnerId) {
+            await this.invalidateOwnerCache(oldOwnerId);
+        }
+        if (data.ownerId && data.ownerId !== oldOwnerId) {
+            await this.invalidateOwnerCache(data.ownerId);
+        }
         
         return savedCategory;
     }
@@ -103,8 +123,10 @@ export class CategoryService {
         }
 
         await this.categoryRepository.remove(category);
+
+        const cacheKey = `category_${id}`;
+        await this.cacheManager.del(cacheKey);
         await this.cacheManager.del('all_categories');
-        await this.cacheManager.del(`category_${id}`);
         
         return { message: 'Categoria excluída com sucesso' };
     }
@@ -124,5 +146,13 @@ export class CategoryService {
 
         await this.cacheManager.set(cacheKey, categories);
         return categories;
+    }
+
+    private async invalidateCategoryCaches() {
+        await this.cacheManager.del('all_categories');
+    }
+
+    private async invalidateOwnerCache(ownerId: number) {
+        await this.cacheManager.del(`categories_by_owner_${ownerId}`);
     }
 } 

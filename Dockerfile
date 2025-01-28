@@ -1,6 +1,9 @@
 # Imagem base
 FROM node:18-alpine
 
+# Instala o Redis no Alpine Linux
+RUN apk add --no-cache redis
+
 # Diretório de trabalho
 WORKDIR /app
 

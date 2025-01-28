@@ -21,6 +21,10 @@ export class ProductService {
         @Inject(CACHE_MANAGER) private cacheManager: Cache
     ) {}
 
+    private logCacheOperation(operation: string, key: string) {
+        console.log(`🔄 Redis Operation: ${operation} - Key: ${key}`);
+    }
+
     async create(data: CreateProductDto): Promise<Product> {
         const user = await this.userRepository.findOne({
             where: { id: data.ownerId }
@@ -48,31 +52,44 @@ export class ProductService {
             category: category
         });
         
-        return await this.productRepository.save(product);
+        const savedProduct = await this.productRepository.save(product);
+        
+        await this.invalidateProductCaches();
+        await this.invalidateOwnerCache(savedProduct.owner.id);
+        
+        return savedProduct;
     }
 
     async findAll(): Promise<Product[]> {
+        this.logCacheOperation('GET', 'all_products');
         const cachedProducts = await this.cacheManager.get<Product[]>('all_products');
+        
         if (cachedProducts) {
+            console.log('✅ Cache HIT: Dados recuperados do Redis - Key: all_products');
             return cachedProducts;
         }
 
+        console.log('❌ Cache MISS: Buscando dados do banco - Key: all_products');
         const products = await this.productRepository.find({
             relations: ["owner", "category"]
         });
 
+        this.logCacheOperation('SET', 'all_products');
         await this.cacheManager.set('all_products', products);
         return products;
     }
 
     async findOne(id: number): Promise<Product> {
         const cacheKey = `product_${id}`;
+        this.logCacheOperation('GET', cacheKey);
         const cachedProduct = await this.cacheManager.get<Product>(cacheKey);
         
         if (cachedProduct) {
+            console.log(`✅ Cache HIT: Produto encontrado no Redis - Key: ${cacheKey}`);
             return cachedProduct;
         }
 
+        console.log(`❌ Cache MISS: Buscando produto no banco - Key: ${cacheKey}`);
         const product = await this.productRepository.findOne({
             where: { id },
             relations: ["owner", "category"]
@@ -82,12 +99,14 @@ export class ProductService {
             throw new NotFoundException('Produto não encontrado');
         }
 
+        this.logCacheOperation('SET', cacheKey);
         await this.cacheManager.set(cacheKey, product);
         return product;
     }
 
     async update(id: number, data: Partial<CreateProductDto>): Promise<Product> {
         const product = await this.findOne(id);
+        const oldOwnerId = product.owner?.id;
 
         if (data.ownerId) {
             const user = await this.userRepository.findOne({
@@ -112,17 +131,33 @@ export class ProductService {
         }
 
         const updatedProduct = Object.assign({}, product, data);
-        return await this.productRepository.save(updatedProduct);
+        const savedProduct = await this.productRepository.save(updatedProduct);
+        
+        await this.invalidateProductCaches();
+        if (oldOwnerId) {
+            await this.invalidateOwnerCache(oldOwnerId);
+        }
+        if (data.ownerId && data.ownerId !== oldOwnerId) {
+            await this.invalidateOwnerCache(data.ownerId);
+        }
+        
+        return savedProduct;
     }
 
     async remove(id: number): Promise<void> {
         const product = await this.findOne(id);
+        const ownerId = product.owner?.id;
         
         if (product.owner) {
             throw new Error('Não é possível excluir um produto que possui proprietário');
         }
-
+        
         await this.productRepository.remove(product);
+        
+        await this.invalidateProductCaches();
+        if (ownerId) {
+            await this.invalidateOwnerCache(ownerId);
+        }
     }
 
     async findByOwner(ownerId: number): Promise<Product[]> {
@@ -148,8 +183,25 @@ export class ProductService {
 
     async delete(id: number): Promise<void> {
         const product = await this.findOne(id);
+        const ownerId = product.owner?.id;
+        
         await this.productRepository.remove(product);
+        
+        await this.invalidateProductCaches();
+        if (ownerId) {
+            await this.invalidateOwnerCache(ownerId);
+        }
+    }
+
+    // Adicionar novos métodos auxiliares para gerenciar o cache
+    private async invalidateProductCaches(): Promise<void> {
+        this.logCacheOperation('DELETE', 'all_products');
         await this.cacheManager.del('all_products');
-        await this.cacheManager.del(`product_${id}`);
+    }
+
+    private async invalidateOwnerCache(ownerId: number): Promise<void> {
+        const ownerCacheKey = `products_by_owner_${ownerId}`;
+        this.logCacheOperation('DELETE', ownerCacheKey);
+        await this.cacheManager.del(ownerCacheKey);
     }
 } 
