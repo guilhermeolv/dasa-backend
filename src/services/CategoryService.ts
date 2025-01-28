@@ -122,10 +122,17 @@ export class CategoryService {
             throw new NotFoundException('Não é possível excluir uma categoria que possui produtos!');
         }
 
+        const ownerId = category.owner?.id;
+        if (ownerId) {
+            await this.invalidateOwnerCache(ownerId);
+        }
+
         await this.categoryRepository.remove(category);
 
         const cacheKey = `category_${id}`;
+        this.logCacheOperation('DELETE', cacheKey);
         await this.cacheManager.del(cacheKey);
+        this.logCacheOperation('DELETE', 'all_categories');
         await this.cacheManager.del('all_categories');
         
         return { message: 'Categoria excluída com sucesso' };
@@ -134,11 +141,12 @@ export class CategoryService {
     async findByOwner(ownerId: number): Promise<Category[]> {
         const cacheKey = `categories_by_owner_${ownerId}`;
         const cachedCategories = await this.cacheManager.get<Category[]>(cacheKey);
-        
         if (cachedCategories) {
+            console.log(`✅ Cache HIT: Categoria encontrada no Redis - Key: ${cacheKey}`);
             return cachedCategories;
         }
 
+        console.log(`❌ Cache MISS: Buscando categoria no banco - Key: ${cacheKey}`);
         const categories = await this.categoryRepository.find({
             where: { owner: { id: ownerId } },
             relations: ["products"]
@@ -149,10 +157,13 @@ export class CategoryService {
     }
 
     private async invalidateCategoryCaches() {
+        this.logCacheOperation('DELETE', 'all_categories');
         await this.cacheManager.del('all_categories');
     }
 
     private async invalidateOwnerCache(ownerId: number) {
-        await this.cacheManager.del(`categories_by_owner_${ownerId}`);
+        const cacheKey = `categories_by_owner_${ownerId}`;
+        this.logCacheOperation('DELETE', cacheKey);
+        await this.cacheManager.del(cacheKey);
     }
 } 
