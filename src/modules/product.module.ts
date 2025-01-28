@@ -5,9 +5,14 @@ import { ProductService } from '../services/ProductService';
 import { Product } from '../models/Product';
 import { User } from '../models/User';
 import { Category } from '../models/Category';
+import { cacheConfig } from '../config/cache.config';
+import { CacheModule } from '@nestjs/cache-manager';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Product, User, Category])],
+  imports: [
+    TypeOrmModule.forFeature([Product, User, Category]),
+    CacheModule.register(cacheConfig)
+  ],
   controllers: [ProductController],
   providers: [ProductService],
   exports: [ProductService]

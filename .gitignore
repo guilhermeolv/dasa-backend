@@ -38,3 +38,6 @@ desktop.ini
 
 # Nest.js
 .nest/
+
+# Redis
+dump.rdb

@@ -5,6 +5,9 @@ import { Product } from '../models/Product';
 import { User } from '../models/User';
 import { Category } from '../models/Category';
 import { CreateProductDto } from '../dtos/product.dto';
+import { Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 
 @Injectable()
 export class ProductService {
@@ -14,7 +17,8 @@ export class ProductService {
         @InjectRepository(User)
         private userRepository: Repository<User>,
         @InjectRepository(Category)
-        private categoryRepository: Repository<Category>
+        private categoryRepository: Repository<Category>,
+        @Inject(CACHE_MANAGER) private cacheManager: Cache
     ) {}
 
     async create(data: CreateProductDto): Promise<Product> {
@@ -48,12 +52,27 @@ export class ProductService {
     }
 
     async findAll(): Promise<Product[]> {
-        return await this.productRepository.find({
+        const cachedProducts = await this.cacheManager.get<Product[]>('all_products');
+        if (cachedProducts) {
+            return cachedProducts;
+        }
+
+        const products = await this.productRepository.find({
             relations: ["owner", "category"]
         });
+
+        await this.cacheManager.set('all_products', products);
+        return products;
     }
 
     async findOne(id: number): Promise<Product> {
+        const cacheKey = `product_${id}`;
+        const cachedProduct = await this.cacheManager.get<Product>(cacheKey);
+        
+        if (cachedProduct) {
+            return cachedProduct;
+        }
+
         const product = await this.productRepository.findOne({
             where: { id },
             relations: ["owner", "category"]
@@ -63,6 +82,7 @@ export class ProductService {
             throw new NotFoundException('Produto não encontrado');
         }
 
+        await this.cacheManager.set(cacheKey, product);
         return product;
     }
 
@@ -106,10 +126,17 @@ export class ProductService {
     }
 
     async findByOwner(ownerId: number): Promise<Product[]> {
-        return await this.productRepository.find({
+        const cachedProducts = await this.cacheManager.get<Product[]>(`products_by_owner_${ownerId}`);
+        if (cachedProducts) {
+            return cachedProducts;
+        }
+
+        const products = await this.productRepository.find({
             where: { owner: { id: ownerId } },
             relations: ["owner", "category"]
         });
+        await this.cacheManager.set(`products_by_owner_${ownerId}`, products);
+        return products;
     }
 
     async associateCategory(productId: number, categoryId: number): Promise<void> {
@@ -122,5 +149,7 @@ export class ProductService {
     async delete(id: number): Promise<void> {
         const product = await this.findOne(id);
         await this.productRepository.remove(product);
+        await this.cacheManager.del('all_products');
+        await this.cacheManager.del(`product_${id}`);
     }
 } 

@@ -4,6 +4,9 @@ import { Repository } from 'typeorm';
 import { Category } from '../models/Category';
 import { User } from '../models/User';
 import { CreateCategoryDto } from '../dtos/category.dto';
+import { Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 
 @Injectable()
 export class CategoryService {
@@ -11,7 +14,8 @@ export class CategoryService {
         @InjectRepository(Category)
         private categoryRepository: Repository<Category>,
         @InjectRepository(User)
-        private userRepository: Repository<User>
+        private userRepository: Repository<User>,
+        @Inject(CACHE_MANAGER) private cacheManager: Cache
     ) {}
 
     async create(data: CreateCategoryDto): Promise<Category> {
@@ -28,16 +32,33 @@ export class CategoryService {
             owner: user
         });
         
-        return await this.categoryRepository.save(category);
+        const savedCategory = await this.categoryRepository.save(category);
+        await this.cacheManager.del('all_categories');
+        return savedCategory;
     }
 
     async findAll(): Promise<Category[]> {
-        return await this.categoryRepository.find({
+        const cachedCategories = await this.cacheManager.get<Category[]>('all_categories');
+        if (cachedCategories) {
+            return cachedCategories;
+        }
+
+        const categories = await this.categoryRepository.find({
             relations: ["products", "owner"]
         });
+
+        await this.cacheManager.set('all_categories', categories);
+        return categories;
     }
 
     async findOne(id: number): Promise<Category> {
+        const cacheKey = `category_${id}`;
+        const cachedCategory = await this.cacheManager.get<Category>(cacheKey);
+        
+        if (cachedCategory) {
+            return cachedCategory;
+        }
+
         const category = await this.categoryRepository.findOne({
             where: { id },
             relations: ["products", "owner"]
@@ -47,6 +68,7 @@ export class CategoryService {
             throw new NotFoundException('Categoria não encontrada');
         }
 
+        await this.cacheManager.set(cacheKey, category);
         return category;
     }
 
@@ -61,12 +83,16 @@ export class CategoryService {
             if (!user) {
                 throw new NotFoundException('Usuário não encontrado');
             }
-
             category.owner = user;
         }
 
         const updatedCategory = Object.assign({}, category, data);
-        return await this.categoryRepository.save(updatedCategory);
+        const savedCategory = await this.categoryRepository.save(updatedCategory);
+        
+        await this.cacheManager.del('all_categories');
+        await this.cacheManager.del(`category_${id}`);
+        
+        return savedCategory;
     }
 
     async remove(id: number): Promise<{ message: string }> {
@@ -77,13 +103,26 @@ export class CategoryService {
         }
 
         await this.categoryRepository.remove(category);
+        await this.cacheManager.del('all_categories');
+        await this.cacheManager.del(`category_${id}`);
+        
         return { message: 'Categoria excluída com sucesso' };
     }
 
     async findByOwner(ownerId: number): Promise<Category[]> {
-        return await this.categoryRepository.find({
+        const cacheKey = `categories_by_owner_${ownerId}`;
+        const cachedCategories = await this.cacheManager.get<Category[]>(cacheKey);
+        
+        if (cachedCategories) {
+            return cachedCategories;
+        }
+
+        const categories = await this.categoryRepository.find({
             where: { owner: { id: ownerId } },
             relations: ["products"]
         });
+
+        await this.cacheManager.set(cacheKey, categories);
+        return categories;
     }
 } 
